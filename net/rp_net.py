@@ -165,17 +165,7 @@ class RP_Net(nn.Module):
         else:
             raise NotImplementedError
 
-        if self.backbone_cfg.get('use_voxelmorph', False):
-            self.voxel_morph = VoxelMorph(2, self.backbone_cfg, in_channels=num_feat, scale=self.scale)
-            # self.voxel_morph = FullVoxelMorph(self.backbone_cfg)
-
-        if self.backbone_cfg.get('use_deeds', False):
-            self.voxel_morph = DEEDS(2, self.backbone_cfg, in_channels=num_feat, scale=self.scale)
-
-        if self.backbone_cfg.get('use_attention', False):
-            self.att = ContextCorrelationEncoder(backbone_cfg, in_channels=num_feat)
-        else:
-            self.att = SelfAttention(backbone_cfg, in_channels=num_feat)
+        self.cre = ContextCorrelationEncoder(backbone_cfg, in_channels=num_feat)
 
         if self.use_relation_enc == 'concat':
             self.sim_cat = SimpleConcat(backbone_cfg, in_channels=num_feat)
@@ -245,7 +235,7 @@ class RP_Net(nn.Module):
         supp_mask = F.avg_pool2d(supp_mask, self.scale)
 
         if self.use_relation_enc == 'relation':
-            supp_fts = self.att(supp_fts[0][0] * supp_mask, supp_fts[0][0] * (1 - supp_mask))[None, None, ...]
+            supp_fts = self.cre(supp_fts[0][0] * supp_mask, supp_fts[0][0] * (1 - supp_mask))[None, None, ...]
         elif self.use_relation_enc == 'concat':
             supp_fts = self.sim_cat(supp_fts[0][0], supp_mask)[None, None, ...]
         inter_qry_fts = qry_fts
@@ -253,7 +243,7 @@ class RP_Net(nn.Module):
         refinement = {}
         for i in range(self.num_iter):
             if self.use_relation_enc == 'relation': 
-                inter_qry_fts = self.att(qry_fts[0] * qry_mask, qry_fts[0] * (1 - qry_mask))[None, ...]
+                inter_qry_fts = self.cre(qry_fts[0] * qry_mask, qry_fts[0] * (1 - qry_mask))[None, ...]
             elif self.use_relation_enc == 'concat':
                 inter_qry_fts = self.sim_cat(qry_fts[0], qry_mask)[None, ...]
             outputs = []
