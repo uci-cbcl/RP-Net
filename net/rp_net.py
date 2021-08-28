@@ -10,7 +10,7 @@ import torch.nn.functional as F
 
 from .vgg import Encoder
 from .modules import *
-from .unet import Unet_2D
+from .unet import U_Net
 import numpy as np
 import torchvision
 from torchvision.models.resnet import BasicBlock
@@ -127,10 +127,63 @@ def dice_ce(logits, true, eps=1e-7):
     return dice_loss + ce_loss
 
 
+def coords_grid(batch, ht, wd):
+    coords = torch.meshgrid(torch.arange(ht), torch.arange(wd))
+    coords = torch.stack(coords[::-1], dim=0).float()
+    return coords[None].repeat(batch, 1, 1, 1)
+
+
+def bilinear_sampler(img, coords, mode='bilinear', mask=False):
+    """ Wrapper for grid_sample, uses pixel coordinates """
+    H, W = img.shape[-2:]
+    xgrid, ygrid = coords.split([1,1], dim=-1)
+    xgrid = 2*xgrid/(W-1) - 1
+    ygrid = 2*ygrid/(H-1) - 1
+
+    grid = torch.cat([xgrid, ygrid], dim=-1)
+    img = F.grid_sample(img, grid, align_corners=True)
+
+    if mask:
+        mask = (xgrid > -1) & (ygrid > -1) & (xgrid < 1) & (ygrid < 1)
+        return img, mask.float()
+
+    return img
+
+
+def Correlation(fmap1, fmap2, r=3):
+    batch, dim, ht, wd = fmap1.shape
+    fmap1 = fmap1.view(batch, dim, ht*wd)
+    fmap2 = fmap2.view(batch, dim, ht*wd) 
+    
+    corr = torch.matmul(fmap1.transpose(1,2), fmap2)
+    corr = corr.view(batch, ht, wd, 1, ht, wd)
+    corr = corr  / torch.sqrt(torch.tensor(dim).float())
+    corr = corr.view(-1, 1, ht, wd)
+    # corr = F.adaptive_avg_pool2d(corr, (64, 64))
+    # corr = corr.view(batch, ht, wd, -1)
+    # corr = corr.permute(0, 3, 1, 2).contiguous()
+
+    coords = coords_grid(batch, ht, wd).to(fmap1.device)
+    coords = coords.permute(0, 2, 3, 1)
+    batch, h1, w1, _ = coords.shape
+    dx = torch.linspace(-r, r, 2*r+1)
+    dy = torch.linspace(-r, r, 2*r+1)
+    delta = torch.stack(torch.meshgrid(dy, dx), axis=-1).to(coords.device)
+
+    centroid_lvl = coords.reshape(batch*h1*w1, 1, 1, 2)
+    delta_lvl = delta.view(1, 2*r+1, 2*r+1, 2)
+    coords_lvl = centroid_lvl + delta_lvl
+
+    corr = bilinear_sampler(corr, coords_lvl)
+    corr = corr.view(batch, h1, w1, -1)
+    out = corr.permute(0, 3, 1, 2).contiguous().float()
+
+    return out
+
+
 class RP_Net(nn.Module):
     """
     Fewshot Segmentation model
-
     Args:
         in_channels:
             number of input channels
@@ -154,7 +207,7 @@ class RP_Net(nn.Module):
             num_feat = 512
 
         elif self.config['backbone'] == 'UNet':
-            self.encoder = U_Net_Short(backbone_cfg)
+            self.encoder = U_Net(backbone_cfg)
             num_feat = 256
             if pretrained_path:
                 dic = torch.load(self.pretrained_path, map_location='cpu')['state_dict']
@@ -194,14 +247,6 @@ class RP_Net(nn.Module):
             imgs_concat = imgs_concat.expand(-1, 3, -1, -1)
         supp_pyramid = self.encoder(imgs_concat, fore_mask[0][0].unsqueeze(1))
         img_fts = supp_pyramid['d4']
-        if self.backbone_cfg.get('use_multi_scale', False):
-            supp_multi_scale_fts = []
-            for fts in img_fts:
-                fts_size = fts.shape[-2:]
-                fts = fts.view(n_ways, n_shots, batch_size, -1, *fts_size)   # N x B x C x H' x W'
-                supp_multi_scale_fts.append(fts)
-
-            img_fts = img_fts[-1]
 
         fts_size = img_fts.shape[-2:]
         supp_fts = img_fts.view(n_ways, n_shots, batch_size, -1, *fts_size)  # Wa x Sh x B x C x H' x W'
@@ -211,14 +256,6 @@ class RP_Net(nn.Module):
             imgs_concat = imgs_concat.expand(-1, 3, -1, -1)
         qry_pyramid = self.encoder(imgs_concat, fore_mask[0][0].unsqueeze(1))
         img_fts = qry_pyramid['d4']
-        if self.backbone_cfg.get('use_multi_scale', False):
-            qry_multi_scale_fts = []
-            for fts in img_fts:
-                fts_size = fts.shape[-2:]
-                fts = fts.view(n_queries, batch_size, -1, *fts_size)   # N x B x C x H' x W'
-                qry_multi_scale_fts.append(fts)
-
-            img_fts = img_fts[-1]
 
 
         fts_size = img_fts.shape[-2:]
@@ -316,7 +353,6 @@ class RP_Net(nn.Module):
     def calDist(self, fts, prototype, scaler=20):
         """
         Calculate the distance between features and prototypes
-
         Args:
             fts: input features
                 expect shape: N x C x H x W
@@ -330,7 +366,6 @@ class RP_Net(nn.Module):
     def getFeatures(self, fts, mask):
         """
         Extract foreground and background features via masked average pooling
-
         Args:
             fts: input features, expect shape: 1 x C x H' x W'
             mask: binary mask, expect shape: 1 x H x W
@@ -344,7 +379,6 @@ class RP_Net(nn.Module):
     def getPrototype(self, fg_fts, bg_fts):
         """
         Average the features to obtain the prototype
-
         Args:
             fg_fts: lists of list of foreground features for each way/shot
                 expect shape: Wa x Sh x [1 x C]
@@ -360,7 +394,6 @@ class RP_Net(nn.Module):
     def alignLoss(self, qry_fts, pred, supp_fts, fore_mask, back_mask):
         """
         Compute the loss for the prototype alignment branch
-
         Args:
             qry_fts: embedding features for query images
                 expect shape: N x C x H' x W'

@@ -1,0 +1,11 @@
+results/*
+*.pyc
+*.so
+*/ipynb_checkpoints/*
+.idea/*
+*.o
+*.ipynb
+*.vscode/*
+*.log
+.vscode/launch.json
+.vscode/settings.json

@@ -1,0 +1,121 @@
+
+raw_dir: /mnt/hdd10t/baina/abdomen_segmentation/raw
+data_dir: /home/haotang/workspace/data/abdomen/standard
+preprocessed_data_dir: /home/haotang/workspace/data/abdomen/preprocessed
+
+num_slice: 280
+num_x: 272
+num_y: 272
+
+# maximum input size to the network
+train_max_crop_size: 
+  - 256
+  - 256
+  - 256 
+bbox_border: 8
+pad_value: -1024
+jitter_range: 
+  - 4
+  - 16
+  - 16
+stride: 
+  - 16
+  - 32
+  - 32
+test_max_size: 
+  - 256
+  - 320
+  - 320
+HU_range:
+  - -1024
+  - 3072
+
+# whether to do affine and elastic transformation
+do_elastic: True
+
+# post process parameters
+do_postprocess: False
+
+
+
+unet_normalize_type: BatchNorm2d
+final_activation: sigmoid
+
+# context net
+context_net_downsample_scale: 
+  - 2
+  - 2
+  - 2
+
+# # of input channel since it is CT image we only have one channel
+chanel: 1
+
+# The feature map used for detection is a downsampled by stride
+stride: 8
+
+# The smallest feature map in the network is downsampled by max_stride
+max_stride: 16
+
+
+net: RP_Net
+batch_size: 4
+
+lr_schedule: lr_shedule
+optimizer: Adam
+init_lr: 0.00001
+momentum : 0.9
+weight_decay: 0.0001
+
+# total # of epochs
+epochs: 100
+
+# save check point (model weights) every epoch_save epochs
+epoch_save: 1
+
+# num_workers for data loader
+num_workers: 4
+
+train_set_name: split/abd_110_train.csv
+eval_set_name: split/abd_110_test.csv
+
+n_shot: 1
+n_way: 1
+# k in 'Squeeze & Excite' Guided Few-Shot Segmentation of Volumetric Images
+# https://arxiv.org/abs/1902.01314
+k: 12 
+class_csv_dir: ./split/abd_110_classes
+train_classes:
+  - Spleen
+  - Kidney L
+  - Kidney R
+eval_classes:
+  - Liver
+
+align_loss_scaler: 1
+reg_loss_scaler: 0
+reg_ft_scale: 1
+pretrained_path: null
+
+use_registration_loss: True
+use_registration_mask: True
+do_deformable: False
+backbone: UNet
+mask_feature_map: no
+radius: 4
+scheduler_step: 30
+use_DSC: True
+n_iter_refinement: 4
+n_test_iter_refinement: 10
+soft_mask: False
+mask_refinement_correlation_radius: 5
+do_intaug: True
+gamma_range:
+  - 0.5
+  - 1.5
+loss: dice_ce
+n_runs: 5
+
+
+data_dir: /home/haotang/workspace/data/abdomen/preprocessed
+out_dir: /home/haotang/workspace/LGCA/results/0129_fewshotmorph_att_true_iterative_dsc_use_pretrained_liver/
+ckpt: Null
